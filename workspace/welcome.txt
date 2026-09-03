@@ -1,0 +1,10 @@
+This is your assistant's sandbox folder.
+
+Try asking it things like:
+- "what files are in my workspace?"
+- "read welcome.txt"
+- "make a file called todo.txt with my 3 top priorities for this week"
+- "rename todo.txt to this-week.txt"
+
+Once you trust it, set ASSISTANT_WORKSPACE in .env to a real folder (like
+your Downloads directory) and it'll operate on that instead of this one.
