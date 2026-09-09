@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Luke Damian — Portfolio</title>
+  <meta name="description" content="Portfolio of Luke Damian — projects, skills, and contact info." />
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+
+  <!-- ===== Header / Nav ===== -->
+  <header class="site-header">
+    <div class="container nav-wrap">
+      <a href="#home" class="logo">Luke<span>.</span></a>
+
+      <nav class="nav" id="primary-nav">
+        <a href="#about">About</a>
+        <a href="#projects">Projects</a>
+        <a href="#skills">Skills</a>
+        <a href="#contact">Contact</a>
+      </nav>
+
+      <div class="nav-actions">
+        <button id="theme-toggle" class="icon-btn" aria-label="Toggle dark mode" title="Toggle dark mode">
+          <span aria-hidden="true">🌙</span>
+        </button>
+        <button id="nav-toggle" class="icon-btn menu-btn" aria-label="Toggle menu" aria-expanded="false" aria-controls="primary-nav">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- ===== Hero ===== -->
+    <section id="home" class="hero">
+      <div class="container hero-grid">
+        <div class="hero-text reveal">
+          <p class="eyebrow">Hi, I'm</p>
+          <h1>Luke Damian</h1>
+          <p class="tagline">
+            <!-- EDIT ME: your one-line role/pitch -->
+            I build things for the web. <span class="typed" id="typed-role">Developer.</span>
+          </p>
+          <p class="hero-sub">
+            <!-- EDIT ME: 1-2 sentence intro about you -->
+            Replace this with a short intro: what you do, what you're learning,
+            and what kind of projects you like building.
+          </p>
+          <div class="hero-cta">
+            <a href="#projects" class="btn btn-primary">See my work</a>
+            <a href="#contact" class="btn btn-ghost">Get in touch</a>
+          </div>
+        </div>
+        <div class="hero-visual reveal" aria-hidden="true">
+          <div class="blob"></div>
+          <div class="avatar-card">
+            <div class="avatar-placeholder">LD</div>
+          </div>
+        </div>
+      </div>
+      <a href="#about" class="scroll-cue" aria-label="Scroll to About">
+        <span></span>
+      </a>
+    </section>
+
+    <!-- ===== About ===== -->
+    <section id="about" class="section">
+      <div class="container">
+        <h2 class="section-title reveal">About Me</h2>
+        <div class="about-grid">
+          <p class="about-text reveal">
+            <!-- EDIT ME: your real bio -->
+            This is placeholder bio text. Talk about your background, what
+            got you into building things, and what you're focused on right
+            now. Two or three short paragraphs works well — keep it
+            conversational, not a resume dump.
+          </p>
+          <ul class="about-facts reveal">
+            <li><strong>Location</strong><span>Your City, Country</span></li>
+            <li><strong>Focus</strong><span>Web development</span></li>
+            <li><strong>Currently</strong><span>Building this site 🎉</span></li>
+            <li><strong>Email</strong><span><a href="mailto:you@example.com">you@example.com</a></span></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Projects ===== -->
+    <section id="projects" class="section alt">
+      <div class="container">
+        <h2 class="section-title reveal">Projects</h2>
+        <p class="section-sub reveal">A few things I've built. Replace these with your own.</p>
+
+        <div class="projects-grid">
+          <article class="card project-card reveal">
+            <div class="card-thumb" data-label="01"></div>
+            <div class="card-body">
+              <h3>Project One</h3>
+              <p>Short description of what this project does and why it's interesting.</p>
+              <div class="tags">
+                <span>HTML</span><span>CSS</span><span>JS</span>
+              </div>
+              <div class="card-links">
+                <a href="#" target="_blank" rel="noopener">Live demo</a>
+                <a href="#" target="_blank" rel="noopener">Source</a>
+              </div>
+            </div>
+          </article>
+
+          <article class="card project-card reveal">
+            <div class="card-thumb" data-label="02"></div>
+            <div class="card-body">
+              <h3>Project Two</h3>
+              <p>Short description of what this project does and why it's interesting.</p>
+              <div class="tags">
+                <span>Python</span><span>API</span>
+              </div>
+              <div class="card-links">
+                <a href="#" target="_blank" rel="noopener">Live demo</a>
+                <a href="#" target="_blank" rel="noopener">Source</a>
+              </div>
+            </div>
+          </article>
+
+          <article class="card project-card reveal">
+            <div class="card-thumb" data-label="03"></div>
+            <div class="card-body">
+              <h3>Project Three</h3>
+              <p>Short description of what this project does and why it's interesting.</p>
+              <div class="tags">
+                <span>React</span><span>Design</span>
+              </div>
+              <div class="card-links">
+                <a href="#" target="_blank" rel="noopener">Live demo</a>
+                <a href="#" target="_blank" rel="noopener">Source</a>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Skills ===== -->
+    <section id="skills" class="section">
+      <div class="container">
+        <h2 class="section-title reveal">Skills</h2>
+        <div class="skills-grid reveal">
+          <div class="skill-group">
+            <h3>Languages</h3>
+            <div class="pill-row">
+              <span class="pill">HTML</span>
+              <span class="pill">CSS</span>
+              <span class="pill">JavaScript</span>
+              <span class="pill">Python</span>
+            </div>
+          </div>
+          <div class="skill-group">
+            <h3>Tools</h3>
+            <div class="pill-row">
+              <span class="pill">Git</span>
+              <span class="pill">GitHub</span>
+              <span class="pill">VS Code</span>
+            </div>
+          </div>
+          <div class="skill-group">
+            <h3>Currently learning</h3>
+            <div class="pill-row">
+              <span class="pill">React</span>
+              <span class="pill">APIs</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Contact ===== -->
+    <section id="contact" class="section alt">
+      <div class="container contact-wrap">
+        <h2 class="section-title reveal">Let's talk</h2>
+        <p class="section-sub reveal">
+          Have a project in mind, or just want to say hi? Reach out.
+        </p>
+        <form class="contact-form reveal" id="contact-form">
+          <div class="field">
+            <label for="name">Name</label>
+            <input type="text" id="name" name="name" required />
+          </div>
+          <div class="field">
+            <label for="email">Email</label>
+            <input type="email" id="email" name="email" required />
+          </div>
+          <div class="field">
+            <label for="message">Message</label>
+            <textarea id="message" name="message" rows="5" required></textarea>
+          </div>
+          <button type="submit" class="btn btn-primary">Send message</button>
+          <p class="form-note" id="form-note" role="status" aria-live="polite"></p>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-wrap">
+      <p>&copy; <span id="year"></span> Luke Damian. Built with plain HTML, CSS &amp; JS.</p>
+      <div class="socials">
+        <a href="#" target="_blank" rel="noopener" aria-label="GitHub">GitHub</a>
+        <a href="#" target="_blank" rel="noopener" aria-label="LinkedIn">LinkedIn</a>
+        <a href="mailto:you@example.com" aria-label="Email">Email</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="js/main.js"></script>
+</body>
+</html>
