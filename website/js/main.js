@@ -74,7 +74,7 @@ if ("IntersectionObserver" in window) {
 // =========================================================
 // Rotating role text in hero (EDIT: change the words below)
 // =========================================================
-const roles = ["Developer.", "Builder.", "Problem solver.", "Learner."];
+const roles = ["Analyst.", "Advisor.", "Dealmaker.", "Learner."];
 const typedEl = document.getElementById("typed-role");
 let roleIndex = 0;
 

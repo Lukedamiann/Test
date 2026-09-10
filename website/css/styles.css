@@ -86,7 +86,7 @@ ul { list-style: none; margin: 0; padding: 0; }
 
 .nav {
   display: flex;
-  gap: 28px;
+  gap: 22px;
 }
 
 .nav a {
@@ -392,6 +392,54 @@ ul { list-style: none; margin: 0; padding: 0; }
 }
 .card-links a:hover { text-decoration: underline; }
 
+/* Timeline entries (Education / Experience / Leadership) */
+.entries {
+  display: grid;
+  gap: 20px;
+}
+.entry-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.entry-head h3 { margin: 0; font-size: 1.1rem; }
+.entry-date {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.entry-role {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  margin: 0 0 14px;
+  font-weight: 600;
+}
+.entry-list {
+  display: grid;
+  gap: 8px;
+}
+.entry-list li {
+  position: relative;
+  padding-left: 18px;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+.entry-list li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.65em;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
 /* Skills */
 .skills-grid {
   display: grid;
@@ -490,9 +538,7 @@ ul { list-style: none; margin: 0; padding: 0; }
   .hero-grid { grid-template-columns: 1fr; }
   .hero-visual { order: -1; height: 220px; }
   .about-grid { grid-template-columns: 1fr; }
-}
 
-@media (max-width: 720px) {
   .nav {
     position: absolute;
     top: 68px;
