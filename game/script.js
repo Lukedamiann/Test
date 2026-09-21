@@ -69,17 +69,40 @@ function hideOverlay() {
   overlay.classList.add("hidden");
 }
 
+function drawFood() {
+  const cx = food.x * CELL + CELL / 2;
+  const cy = food.y * CELL + CELL / 2;
+  ctx.fillStyle = "#facc15";
+  ctx.font = `bold ${CELL * 0.85}px system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("$", cx, cy + 1);
+}
+
+function drawHat(x, y) {
+  const cx = x * CELL + CELL / 2;
+  const topY = y * CELL;
+
+  ctx.fillStyle = "#111827";
+  ctx.fillRect(cx - CELL * 0.55, topY - CELL * 0.1, CELL * 1.1, CELL * 0.16);
+  ctx.fillRect(cx - CELL * 0.32, topY - CELL * 0.55, CELL * 0.64, CELL * 0.48);
+
+  ctx.fillStyle = "#facc15";
+  ctx.fillRect(cx - CELL * 0.32, topY - CELL * 0.2, CELL * 0.64, CELL * 0.1);
+}
+
 function draw() {
   ctx.fillStyle = "#1e293b";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  ctx.fillStyle = "#f87171";
-  ctx.fillRect(food.x * CELL, food.y * CELL, CELL, CELL);
+  drawFood();
 
   snake.forEach((seg, i) => {
     ctx.fillStyle = i === 0 ? "#4ade80" : "#22c55e";
     ctx.fillRect(seg.x * CELL + 1, seg.y * CELL + 1, CELL - 2, CELL - 2);
   });
+
+  drawHat(snake[0].x, snake[0].y);
 }
 
 function tick() {
