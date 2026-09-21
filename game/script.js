@@ -10,8 +10,9 @@ const CELL = canvas.width / GRID_SIZE;
 const STEP_MS = 110;
 
 const BEST_KEY = "snake-best-score";
+const MONSTER_MOVE_EVERY = 3;
 
-let snake, direction, nextDirection, food, score, best, running, paused, loopId;
+let snake, direction, nextDirection, food, monster, monsterTicks, score, best, running, paused, loopId;
 
 function resetState() {
   snake = [
@@ -24,7 +25,9 @@ function resetState() {
   score = 0;
   running = false;
   paused = false;
+  monsterTicks = 0;
   placeFood();
+  placeMonster();
   updateScore();
 }
 
@@ -53,6 +56,39 @@ function placeFood() {
     };
   } while (snake.some((seg) => seg.x === candidate.x && seg.y === candidate.y));
   food = candidate;
+}
+
+function placeMonster() {
+  const head = snake[0];
+  let candidate;
+  let attempts = 0;
+  do {
+    candidate = {
+      x: Math.floor(Math.random() * GRID_SIZE),
+      y: Math.floor(Math.random() * GRID_SIZE),
+    };
+    attempts += 1;
+  } while (
+    attempts < 50 &&
+    (Math.abs(candidate.x - head.x) + Math.abs(candidate.y - head.y) < 8 ||
+      snake.some((seg) => seg.x === candidate.x && seg.y === candidate.y) ||
+      (candidate.x === food.x && candidate.y === food.y))
+  );
+  monster = candidate;
+}
+
+function moveMonster() {
+  const head = snake[0];
+  const dx = head.x - monster.x;
+  const dy = head.y - monster.y;
+
+  if (Math.abs(dx) > Math.abs(dy)) {
+    monster.x += Math.sign(dx);
+  } else if (dy !== 0) {
+    monster.y += Math.sign(dy);
+  } else if (dx !== 0) {
+    monster.x += Math.sign(dx);
+  }
 }
 
 function updateScore() {
@@ -91,11 +127,21 @@ function drawHat(x, y) {
   ctx.fillRect(cx - CELL * 0.32, topY - CELL * 0.2, CELL * 0.64, CELL * 0.1);
 }
 
+function drawMonster() {
+  const cx = monster.x * CELL + CELL / 2;
+  const cy = monster.y * CELL + CELL / 2;
+  ctx.font = `${CELL * 0.9}px system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("👹", cx, cy + 1);
+}
+
 function draw() {
   ctx.fillStyle = "#1e293b";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   drawFood();
+  drawMonster();
 
   snake.forEach((seg, i) => {
     ctx.fillStyle = i === 0 ? "#4ade80" : "#22c55e";
@@ -116,9 +162,14 @@ function tick() {
 
   const hitWall = head.x < 0 || head.x >= GRID_SIZE || head.y < 0 || head.y >= GRID_SIZE;
   const hitSelf = snake.some((seg) => seg.x === head.x && seg.y === head.y);
+  const hitMonster = head.x === monster.x && head.y === monster.y;
 
   if (hitWall || hitSelf) {
-    gameOver();
+    gameOver(`Game over — score ${score}. Press any arrow key to restart`);
+    return;
+  }
+  if (hitMonster) {
+    gameOver(`The monster got you — score ${score}. Press any arrow key to restart`);
     return;
   }
 
@@ -132,10 +183,21 @@ function tick() {
     snake.pop();
   }
 
+  monsterTicks += 1;
+  if (monsterTicks >= MONSTER_MOVE_EVERY) {
+    monsterTicks = 0;
+    moveMonster();
+    if (monster.x === snake[0].x && monster.y === snake[0].y) {
+      draw();
+      gameOver(`The monster got you — score ${score}. Press any arrow key to restart`);
+      return;
+    }
+  }
+
   draw();
 }
 
-function gameOver() {
+function gameOver(message) {
   running = false;
   clearInterval(loopId);
   if (score > best) {
@@ -143,7 +205,7 @@ function gameOver() {
     saveBest(best);
     updateScore();
   }
-  showOverlay(`Game over — score ${score}. Press any arrow key to restart`);
+  showOverlay(message);
 }
 
 function startGame() {
