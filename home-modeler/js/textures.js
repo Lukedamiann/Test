@@ -274,14 +274,25 @@ var HM = (window.HM = window.HM || {});
   };
 
   const cache = new Map();
+  const NEUTRAL = '#f2f2f2';
+
+  // One texture per surface type, painted in neutral grey. Each color is just
+  // a tint on top, so recoloring a house never paints a new texture.
+  function baseTexture(kind) {
+    const key = 'tex:' + kind;
+    if (!cache.has(key)) cache.set(key, texture(painters[kind](NEUTRAL)));
+    return cache.get(key);
+  }
 
   // HM.mat('lap', '#8a9a7b', {uv: 2, rough: 0.8}) -> a textured, bump-mapped material.
   HM.mat = function (kind, color, opts = {}) {
     const key = kind + color + JSON.stringify(opts);
     if (cache.has(key)) return cache.get(key);
-    const tex = texture(painters[kind](color));
+    const tex = baseTexture(kind);
     const m = new THREE.MeshStandardMaterial({
       map: tex,
+      // the neutral texture averages a little under white; lift the tint to match
+      color: new THREE.Color(color).multiplyScalar(1.1),
       bumpMap: opts.bump === false ? null : tex,
       bumpScale: opts.bumpScale ?? 1.5,
       roughness: opts.rough ?? 0.85,
@@ -321,6 +332,49 @@ var HM = (window.HM = window.HM || {});
     t.colorSpace = THREE.NoColorSpace;
     cache.set('groundTex', t);
     return t;
+  };
+
+
+  // Two-lane asphalt: u runs along the road (one repeat = 12 m), v across it.
+  // Dashed yellow center line and solid white edge lines.
+  HM.roadMaterial = function (shoulder = true) {
+    const key = 'road' + shoulder;
+    if (cache.has(key)) return cache.get(key);
+    const c = document.createElement('canvas');
+    c.width = 1024; c.height = 256;
+    const g = c.getContext('2d');
+    const rnd = HM.rng(77);
+    g.fillStyle = '#3d3f42';
+    g.fillRect(0, 0, 1024, 256);
+    for (let i = 0; i < 40000; i++) {
+      const v = 40 + rnd() * 50;
+      g.fillStyle = `rgba(${v},${v},${v + 3},0.5)`;
+      g.fillRect(rnd() * 1024, rnd() * 256, 2, 2);
+    }
+    // patched cracks
+    g.strokeStyle = 'rgba(20,20,22,0.5)';
+    g.lineWidth = 2;
+    for (let i = 0; i < 6; i++) {
+      g.beginPath();
+      let x = rnd() * 1024, y = rnd() * 256;
+      g.moveTo(x, y);
+      for (let k = 0; k < 6; k++) { x += (rnd() - 0.5) * 60; y += (rnd() - 0.5) * 30; g.lineTo(x, y); }
+      g.stroke();
+    }
+    g.fillStyle = '#d8b440';
+    for (let x = 0; x < 1024; x += 256) g.fillRect(x + 20, 124, 128, 8);
+    if (shoulder) {
+      g.fillStyle = '#e8e6df';
+      g.fillRect(0, 14, 1024, 6);
+      g.fillRect(0, 236, 1024, 6);
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
+    const m = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.92 });
+    cache.set(key, m);
+    return m;
   };
 
   // Soft round sprite used for clouds and dust.

@@ -107,8 +107,9 @@ var HM = (window.HM = window.HM || {});
       this.gridAnim = null;
     }
 
-    // Turn a freshly built house into animatable pieces with blueprint lines.
-    prepare(house) {
+    // Turn a freshly built house into animatable pieces, with blueprint lines
+    // when the full build animation will play.
+    prepare(house, withLines = true) {
       const root = house.group;
       root.updateMatrixWorld(true);
       const bp = new THREE.Group();
@@ -130,7 +131,7 @@ var HM = (window.HM = window.HM || {});
         // blueprint: an outline of every mesh in the piece, in final position
         p.lineMat = new THREE.LineBasicMaterial({ color: '#8fd0ff', transparent: true, opacity: 0, depthTest: false, depthWrite: false, toneMapped: false });
         p.lines = [];
-        p.obj.traverse((m) => {
+        if (withLines) p.obj.traverse((m) => {
           if (!m.isMesh) return;
           const l = new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry, 28), p.lineMat);
           l.matrixAutoUpdate = false;
@@ -147,9 +148,15 @@ var HM = (window.HM = window.HM || {});
       return house;
     }
 
-    // Show a new house. withTeardown: animate the old one away first.
-    show(house, { withTeardown = true, instant = false } = {}) {
-      this.prepare(house);
+    // Show a new house.
+    //   withTeardown  animate the old house away first (style switches)
+    //   instant       swap with no animation (live edits while dragging)
+    //   animateTags   swap instantly, but animate pieces with these tags in
+    //                 (e.g. ['garage'] when the garage is switched on)
+    show(house, { withTeardown = true, instant = false, animateTags = null } = {}) {
+      const quick = instant || !!animateTags;
+      this.prepare(house, !quick);
+      if (quick) withTeardown = false;
       const t0 = this.clock;
       // Anything already leaving goes immediately; the current house starts leaving.
       this.leaving.forEach((h) => this.dispose(h));
@@ -161,9 +168,21 @@ var HM = (window.HM = window.HM || {});
       this.current = house;
       this.scene.add(house.group);
 
-      if (instant) {
-        house.parts.forEach((p) => { p.start = -1; p.dur = 0.001; p.lineStart = -10; });
+      if (quick) {
         house.blueprint.visible = false;
+        const tagged = house.parts.filter((p) => animateTags && animateTags.includes(p.tag)).sort((a, b) => a.stage - b.stage || a.cx - b.cx);
+        house.parts.forEach((p) => { p.start = -1; p.dur = 0.001; p.lineStart = -10; });
+        tagged.forEach((p, i) => {
+          p.start = t0 + p.stage * 0.1 + i * 0.05;
+          p.dur = p.kind === 'drop' ? 0.7 : p.kind === 'pop' ? 0.45 : 0.55;
+          p.pivot.visible = false;
+        });
+        if (tagged.length) {
+          const box = new THREE.Box3();
+          tagged.forEach((p) => box.expandByObject(p.pivot));
+          this.dust.burst(box, Math.max(box.min.y, 0) + 0.1, 50, 0.5);
+        }
+        this.pendingDust = [];
         return;
       }
 
@@ -208,7 +227,7 @@ var HM = (window.HM = window.HM || {});
       // Geometries belong to this house; materials are shared and cached.
       house.group.traverse((o) => {
         if (o.geometry) o.geometry.dispose();
-        if (o.isLineSegments) o.material.dispose();
+        if (o.isLineSegments || (o.material && o.material.userData.own)) o.material.dispose();
       });
     }
 

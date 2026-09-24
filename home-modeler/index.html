@@ -9,6 +9,13 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono:wght@400;500&display=swap" />
   <link rel="stylesheet" href="css/styles.css" />
+  <!-- Lets scripts import "three" and its add-ons by name. -->
+  <script type="importmap">
+    { "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    } }
+  </script>
 </head>
 <body>
   <main class="app">
@@ -20,6 +27,12 @@
         <p>Try a home style on a lot</p>
       </header>
 
+      <div class="tabs" role="tablist" aria-label="Panels">
+        <button type="button" role="tab" id="tab-choose" aria-selected="true" aria-controls="pane-choose">Style &amp; lot</button>
+        <button type="button" role="tab" id="tab-custom" aria-selected="false" aria-controls="pane-custom">Customize</button>
+      </div>
+
+      <div class="pane" id="pane-choose" role="tabpanel" aria-labelledby="tab-choose">
       <fieldset>
         <legend>Home style</legend>
         <div class="options" id="style-options">
@@ -63,8 +76,19 @@
           </button>
         </div>
       </fieldset>
+      </div>
 
-      <p class="hint">Drag to orbit · Scroll or pinch to zoom</p>
+      <div class="pane" id="pane-custom" role="tabpanel" aria-labelledby="tab-custom" hidden>
+        <div id="custom-host"></div>
+      </div>
+
+      <div class="panel-foot">
+        <label class="quality" for="quality">
+          <input type="checkbox" id="quality" />
+          <span class="quality-text">High quality <small>Soft shading in corners, sharper shadows, denser grass. Best on a strong computer.</small></span>
+        </label>
+        <p class="hint">Drag to orbit · Scroll or pinch to zoom</p>
+      </div>
     </section>
 
     <details class="panel titleblock" id="titleblock" open>
@@ -76,9 +100,11 @@
       <dl class="tb-grid">
         <div><dt>Era</dt><dd id="tb-era"></dd></div>
         <div><dt>Stories</dt><dd id="tb-stories"></dd></div>
-        <div class="wide"><dt>Plan</dt><dd id="tb-plan"></dd></div>
+        <div><dt>Plan</dt><dd id="tb-plan"></dd></div>
+        <div><dt>Footprint</dt><dd id="tb-footprint"></dd></div>
         <div class="wide"><dt>Roof</dt><dd id="tb-roof"></dd></div>
         <div class="wide"><dt>Exterior</dt><dd id="tb-exterior"></dd></div>
+        <div class="wide"><dt>Features</dt><dd id="tb-features"></dd></div>
         <div><dt>Lot size</dt><dd id="tb-size"></dd></div>
         <div><dt>Grade</dt><dd id="tb-grade"></dd></div>
         <div class="wide flag"><dt>Foundation</dt><dd id="tb-foundation"></dd></div>
@@ -95,6 +121,7 @@
   <script src="js/houses.js"></script>
   <script src="js/lots.js"></script>
   <script src="js/transition.js"></script>
+  <script src="js/options.js"></script>
   <script src="js/controls.js"></script>
   <script src="js/main.js"></script>
 </body>

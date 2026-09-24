@@ -1,16 +1,17 @@
 # Lotline: home style modeler
 
-A 3D browser tool that puts four home styles on four kinds of property lots.
-Pick a style and the old house tears down, glowing blueprint lines trace the
-new one, and the new house assembles piece by piece: foundation, walls,
-windows, roof, then details. Pick a lot and the whole setting changes around it.
+A 3D browser tool that puts four home styles on four kinds of property lots,
+each on a real street with neighbors. Pick a style and the old house tears
+down, glowing blueprint lines trace the new one, and the new house assembles
+piece by piece. Then customize it: colors, materials, size, roof, porch,
+garage, windows and more.
 
-| Styles | Lots |
+| Styles | Lots (each with a road and neighbors) |
 |---|---|
-| Modern | Beachfront (ocean, dunes, boardwalk) |
-| Craftsman | Mountain hillside (slope, pine forest, snowy peaks) |
-| Colonial Farmhouse | Suburban street (road, sidewalks, neighbours) |
-| Mediterranean | Desert (mesas, saguaros, warm evening light) |
+| Modern | Beachfront: ocean, dunes, boardwalks, cottages on stilts |
+| Craftsman | Mountain hillside: slope, pine forest, snowy peaks, chalets |
+| Colonial Farmhouse | Suburban street: sidewalks, street trees, mixed homes |
+| Mediterranean | Desert: mesas, saguaros, Pueblo Revival neighbors |
 
 The foundation changes with the lot, the way it would in real life:
 
@@ -18,6 +19,26 @@ The foundation changes with the lot, the way it would in real life:
 - **Mountain hillside**: a stone walk-out basement where the hill drops away
 - **Suburban street**: a block crawlspace
 - **Desert**: a concrete slab on grade
+
+## Customizing
+
+Open the **Customize** tab:
+
+- **Colors**: wall material (lap siding, board & batten, cedar shakes, stucco,
+  brick, stone, wood slats), plus colors for walls, trim, roof and front door.
+  Pick a swatch or any custom color.
+- **Shape**: width and depth in feet, 1 or 2 stories, gable / hip / flat roof,
+  which way the gable faces, and roof pitch (rise per 12 inches of run).
+- **Features**: porch, 1- or 2-car garage, chimney, dormers, balcony, tower
+  (Mediterranean). Switching a feature on animates just that piece in.
+- **Windows**: divided panes, single pane or arched; shutters; door style.
+
+Each style remembers its own changes while the page is open. **Reset** puts a
+style back to its original design. The spec sheet (square feet, bedrooms,
+bathrooms, roof, features) updates as you go; its figures are rough estimates.
+
+**High quality** (in the panel) adds ambient occlusion (soft shading where
+surfaces meet), sharper shadows and denser grass. It's best on a strong computer.
 
 ## Running it
 
@@ -42,44 +63,56 @@ like shingles, brick, clay tile and stucco are painted onto canvases at startup.
 
 ```
 home-modeler/
-  index.html          page layout, buttons, spec sheet
+  index.html          page layout, panels, spec sheet
   css/styles.css      panel styling (drafting-vellum look)
-  js/util.js          seeded random numbers, noise, easing, shared helpers
-  js/textures.js      procedural materials (siding, stone, clay tile...)
+  js/util.js          random numbers, noise, easing, ground-hugging strips, mesh merging
+  js/textures.js      procedural materials (siding, stone, clay tile, road...)
   js/parts.js         roofs, windows, doors, columns, railings, stairs
-  js/houses.js        the four styles + lot-aware foundations
-  js/lots.js          terrain, sky, ocean, trees, mesas, neighbours
+  js/houses.js        the parametric house builder, styles and their defaults
+  js/options.js       the Customize panel: swatches, controls, which options apply
+  js/lots.js          terrain, sky, ocean, the street, neighbors, trees, grass
   js/transition.js    teardown -> blueprint -> assembly animation
   js/controls.js      orbit camera
-  js/main.js          renderer, lights, UI wiring, render loop
+  js/main.js          renderer, lights, quality setting, UI wiring, render loop
 ```
 
-### The build animation
+### How houses are built
 
-Each house is made of pieces tagged with a **stage** and a **kind**:
+Every house, yours and each neighbor's, comes from one builder in
+`js/houses.js`. A style is two things:
+
+- **defaults**: the options it starts with (colors, size, roof, features...)
+- **flavor**: its fixed character (story height, porch type, trim, eaves)
+
+The builder turns options into pieces, each tagged with a **stage**, a
+**kind** and a **tag**:
 
 ```js
-ctx.add(wall,   1, 'rise'); // stage 1: walls grow up from the foundation
-ctx.add(window, 4, 'pop');  // stage 4: windows spring into place
-ctx.add(roof,   5, 'drop'); // stage 5: roof falls in and bounces
+ctx.add(wall,   1, 'rise');           // stage 1: walls grow up from the foundation
+ctx.add(window, 4, 'pop');            // stage 4: windows spring into place
+ctx.add(roof,   5, 'drop');           // stage 5: roof falls in and bounces
+ctx.add(garage, 1, 'rise', 'garage'); // tagged, so toggling the garage animates it alone
 ```
 
-`transition.js` sorts pieces by stage, then left to right inside each stage,
-and schedules them. Before the solid pieces arrive, it draws each piece's
-edges as blueprint lines that trace themselves in.
+`transition.js` sorts pieces by stage and schedules them. Before the solid
+pieces arrive, it draws each piece's edges as blueprint lines.
+
+Neighbors are built the same way with randomized options, then merged into a
+few large meshes (`HM.mergeByMaterial`) so a whole street stays fast on phones.
 
 ### Adding a style
 
-1. Write a builder in `js/houses.js`, following one of the existing ones.
-   Call `ctx.base([...footprints])` first to get the floor height for the current lot.
-2. Add it to `HM.STYLES` with its specs.
-3. Add a button with `data-style="yourkey"` in `index.html`.
+1. Add an entry to `HM.STYLES` in `js/houses.js` with `defaults` and `flavor`
+   (copy the closest existing style and adjust).
+2. Add a button with `data-style="yourkey"` in `index.html`.
+   Entries marked `local: true` are used only for neighbors.
 
 ### Adding a lot
 
-1. Write a builder in `js/lots.js` that returns `{ group, update(t) }`.
-   Keep the ground flat around the origin, where the house sits.
-2. Add it to `HM.LOTS` with its sky colours, sun direction, foundation type and specs.
+1. Write a builder in `js/lots.js` that returns `{ group, env, keepOut, height, update(t) }`.
+   Use `compose()` to flatten the road and house pads, and `street()` for the
+   road, streetlights and neighbors.
+2. Add it to `HM.LOTS` with its sky colors, sun direction and specs.
 3. Add a button with `data-lot="yourkey"` in `index.html`.
 
 The specs shown for each style and lot describe a typical example, not a real listing.

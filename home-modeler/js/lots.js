@@ -1,4 +1,4 @@
-/* The four property lots: terrain, backdrop, props, sky and sunlight.
+/* The four property lots: terrain, backdrop, street, neighbors, props, sky and sunlight.
    Every lot keeps a flat building pad around the origin where the house sits;
    the house's front faces +z. */
 var HM = (window.HM = window.HM || {});
@@ -45,7 +45,7 @@ var HM = (window.HM = window.HM || {});
 
   // ---------- terrain ----------
   // height(x, z) -> meters; color(x, z, h, slope) -> THREE.Color
-  function terrain({ size = 3200, seg = 320, height, color }) {
+  function terrain({ size = 3200, seg = 400, height, color }) {
     const geo = new THREE.PlaneGeometry(size, size, seg, seg);
     geo.rotateX(-Math.PI / 2);
     const pos = geo.attributes.position;
@@ -80,7 +80,6 @@ var HM = (window.HM = window.HM || {});
     const wf = 1 - HM.smooth(0, front, Math.max(z - z1, 0));
     return wx * wb * wf;
   }
-  const PAD = { x0: -15, x1: 15, z0: -10, z1: 9 };
   const lerp = (a, b, t) => a + (b - a) * t;
   const mixC = (a, b, t) => a.clone().lerp(b, HM.clamp01(t));
 
@@ -174,56 +173,211 @@ var HM = (window.HM = window.HM || {});
     return g;
   }
 
-  function deciduous(x, z, y, s, rnd, leaf = '#557a37') {
+  // Leafy tree: trunk plus a few overlapping lumpy crowns. A small palette of
+  // leaf materials keeps many trees mergeable into few draw calls.
+  const LEAVES = ['#557a37', '#4e7334', '#62823c', '#5b7a3f'];
+  function deciduous(x, z, y, s, rnd, palette = LEAVES) {
     const g = new THREE.Group();
-    const trunk = HM.mesh(new THREE.CylinderGeometry(0.18 * s, 0.28 * s, 3 * s, 7), HM.flat('#5d4632', { rough: 1 }));
-    trunk.position.y = 1.5 * s;
+    const trunk = HM.mesh(new THREE.CylinderGeometry(0.16 * s, 0.3 * s, 3.4 * s, 7), HM.flat('#5d4632', { rough: 1 }));
+    trunk.position.y = 1.7 * s;
     g.add(trunk);
-    const geo = new THREE.IcosahedronGeometry(2.4 * s, 2);
-    const p = geo.attributes.position;
-    for (let i = 0; i < p.count; i++) {
-      const vx = p.getX(i), vy = p.getY(i), vz = p.getZ(i);
-      const n = 0.8 + HM.noise(vx * 0.9 + x, vy * 0.9 + vz * 0.7) * 0.45;
-      p.setXYZ(i, vx * n, vy * n * 0.85, vz * n);
+    const leaf = HM.flat(palette[Math.floor(rnd() * palette.length)], { rough: 0.95 });
+    leaf.flatShading = true;
+    const clumps = 4 + Math.floor(rnd() * 3);
+    for (let k = 0; k < clumps; k++) {
+      const r = (1.3 + rnd() * 0.9) * s;
+      const geo = new THREE.IcosahedronGeometry(r, 1);
+      const p = geo.attributes.position;
+      for (let i = 0; i < p.count; i++) {
+        const n = 0.82 + HM.noise(p.getX(i) * 1.3 + k * 3 + x, p.getY(i) * 1.3 + p.getZ(i) + z) * 0.36;
+        p.setXYZ(i, p.getX(i) * n, p.getY(i) * n * 0.8, p.getZ(i) * n);
+      }
+      geo.computeVertexNormals();
+      const a = (k / clumps) * Math.PI * 2 + rnd();
+      const off = k === 0 ? 0 : 1.2 * s;
+      const m = HM.mesh(geo, leaf);
+      m.position.set(Math.cos(a) * off, (3.6 + rnd() * 1.4) * s + (k === 0 ? 0.8 * s : 0), Math.sin(a) * off);
+      g.add(m);
     }
-    geo.computeVertexNormals();
-    const c = C(leaf).offsetHSL((rnd() - 0.5) * 0.04, 0, (rnd() - 0.5) * 0.08);
-    const crown = HM.mesh(geo, new THREE.MeshStandardMaterial({ color: c, roughness: 0.95, flatShading: true }));
-    crown.position.y = 4 * s;
-    g.add(crown);
     g.position.set(x, y, z);
     return g;
   }
 
-  function simpleHouse({ x, z, y = 0, w = 11, d = 9, h = 3, wall, roof, rotY = 0, pitch = 0.5 }) {
-    const g = new THREE.Group();
-    g.add(HM.box(w, 0.5, d, HM.mat('concrete', '#8f8a82', { uv: 1.2 }), 0, y, 0));
-    g.add(HM.box(w, h, d, wall, 0, y + 0.5, 0));
-    const r = HM.gableRoof({ w, d, pitch, overhang: 0.5, mat: roof, wallMat: wall, trimMat: HM.flat('#f0eee8'), y: y + 0.5 + h });
-    g.add(r.roof, r.gable);
-    const glass = HM.glass();
-    const frame = HM.flat('#f0eee8');
-    for (const a of [-3, 0, 3]) g.add(HM.onWall(HM.window({ w: 1.2, h: 1.4, frame, glass, cols: 2, rows: 2 }), { face: 'front', w, d, along: a, y: y + 1.3 }));
-    g.position.set(x, 0, z);
-    g.rotation.y = rotY;
-    return g;
+  // ---------- grass ----------
+  // Tufts of blades scattered over lawns, swaying in the wind. They're
+  // re-scattered whenever the house changes so none poke through floors,
+  // driveways or paths.
+  HM.Grass = class {
+    constructor({ area, height, count, colors, keepOut = [] }) {
+      this.area = area; this.height = height; this.count = count; this.keepOut = keepOut;
+      const blades = [];
+      for (let b = 0; b < 3; b++) {
+        const g = new THREE.PlaneGeometry(0.05, 1, 1, 3);
+        g.translate(0, 0.5, 0);
+        const p = g.attributes.position;
+        for (let i = 0; i < p.count; i++) {
+          const t = p.getY(i);
+          p.setX(i, p.getX(i) * (1 - t * 0.85));
+          p.setZ(i, t * t * 0.12);
+        }
+        g.rotateY((b / 3) * Math.PI * 2 + 0.4);
+        g.translate((b - 1) * 0.05, 0, (b % 2) * 0.04);
+        blades.push(g);
+      }
+      const geo = new THREE.BufferGeometry();
+      for (const [name, size] of [['position', 3], ['normal', 3], ['uv', 2]]) {
+        const parts = blades.map((g) => g.toNonIndexed().attributes[name].array);
+        const arr = new Float32Array(parts.reduce((n, a) => n + a.length, 0));
+        let off = 0;
+        parts.forEach((a) => { arr.set(a, off); off += a.length; });
+        geo.setAttribute(name, new THREE.BufferAttribute(arr, size));
+      }
+      // Normals point up so tufts shade like the lawn they stand on.
+      const nor = geo.attributes.normal;
+      for (let i = 0; i < nor.count; i++) nor.setXYZ(i, 0, 1, 0);
+      const mat = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.9, side: THREE.DoubleSide });
+      this.uTime = { value: 0 };
+      mat.onBeforeCompile = (sh) => {
+        sh.uniforms.uTime = this.uTime;
+        sh.vertexShader = 'uniform float uTime;\n' + sh.vertexShader.replace('#include <begin_vertex>', `
+          #include <begin_vertex>
+          vec3 base = instanceMatrix[3].xyz;
+          float sway = sin(uTime * 1.7 + base.x * 0.35 + base.z * 0.22) + 0.5 * sin(uTime * 3.1 + base.x * 0.9);
+          transformed.x += sway * 0.07 * position.y * position.y;
+          transformed.z += sway * 0.03 * position.y * position.y;`);
+      };
+      this.mesh = new THREE.InstancedMesh(geo, mat, count);
+      this.mesh.receiveShadow = true;
+      this.mesh.castShadow = false;
+      this.mesh.frustumCulled = false;
+      this.colors = colors.map((c) => new THREE.Color(c));
+      this.scatter([]);
+    }
+    // footprints: [{x, z, w, d}] areas to keep clear (houses, driveways...)
+    scatter(footprints) {
+      const all = this.keepOut.concat(footprints);
+      const rnd = HM.rng(5);
+      const o = new THREE.Object3D();
+      const col = new THREE.Color();
+      const A = this.area;
+      let n = 0, guard = 0;
+      while (n < this.count && guard++ < this.count * 4) {
+        const x = A.x0 + rnd() * (A.x1 - A.x0), z = A.z0 + rnd() * (A.z1 - A.z0);
+        if (all.some((r) => Math.abs(x - r.x) < r.w / 2 && Math.abs(z - r.z) < r.d / 2)) continue;
+        o.position.set(x, this.height(x, z) - 0.02, z);
+        o.rotation.set(0, rnd() * 6.28, 0);
+        const s = 0.18 + rnd() * 0.22;
+        o.scale.set(1 + rnd(), s, 1 + rnd());
+        o.updateMatrix();
+        this.mesh.setMatrixAt(n, o.matrix);
+        col.copy(this.colors[Math.floor(rnd() * this.colors.length)]).offsetHSL(0, 0, (rnd() - 0.5) * 0.08);
+        this.mesh.setColorAt(n, col);
+        n++;
+      }
+      this.mesh.count = n;
+      this.mesh.instanceMatrix.needsUpdate = true;
+      if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    }
+    update(t) { this.uTime.value = t; }
+  };
+
+  // ---------- the street ----------
+  const ROAD_Z = 26, ROAD_HALF = 4;
+  HM.ROAD = { z: ROAD_Z, half: ROAD_HALF };
+
+  // Terrain = the lot's natural shape, flattened along the road and under each
+  // house pad. pads: [{x0, x1, z0, z1, h, mx, back, front}]
+  function compose(raw, roadH, pads) {
+    return (x, z) => {
+      let h = raw(x, z);
+      h = lerp(h, roadH(x), rectWeight(x, z, { x0: -1e9, x1: 1e9, z0: ROAD_Z - ROAD_HALF - 2.5, z1: ROAD_Z + ROAD_HALF + 2.5, mx: 1, back: 7, front: 7 }));
+      for (const p of pads) h = lerp(h, p.h, rectWeight(x, z, p));
+      return h;
+    };
   }
+
+  // Where neighbors go: two to each side on our side of the street, four
+  // across the street facing us.
+  function neighborSpots(spacing) {
+    return [
+      { x: -spacing, z: 0, rot: 0 }, { x: spacing, z: 0, rot: 0 },
+      { x: -spacing * 2, z: 0, rot: 0 }, { x: spacing * 2, z: 0, rot: 0 },
+      { x: -spacing / 2, z: ROAD_Z * 2, rot: Math.PI }, { x: spacing / 2, z: ROAD_Z * 2, rot: Math.PI },
+      { x: -spacing * 1.5, z: ROAD_Z * 2, rot: Math.PI }, { x: spacing * 1.5, z: ROAD_Z * 2, rot: Math.PI },
+    ];
+  }
+  const padFor = (s, h) => ({ x0: s.x - 13, x1: s.x + 13, z0: s.z - 11, z1: s.z + 11, mx: 5, back: 5, front: 5, h });
+
+  // Road, streetlights and neighbor houses, merged for speed.
+  // pick(i, rnd) -> { style, opts } for neighbor i.
+  function street({ group, height, env, spots, pick, rnd, shoulder, sidewalks, lampColor = '#ffe2b0' }) {
+    // road surface with shoulders
+    const roadGround = (x, z) => height(x, z);
+    if (shoulder) group.add(HM.ribbon([[-900, ROAD_Z], [900, ROAD_Z]], ROAD_HALF * 2 + 2.4, shoulder, roadGround, { lift: 0.06, step: 4, uvScale: 3 }));
+    group.add(HM.ribbon([[-900, ROAD_Z], [900, ROAD_Z]], ROAD_HALF * 2, HM.roadMaterial(!sidewalks), roadGround, { lift: 0.11, step: 4, uvScale: 12 }));
+    const solid = new THREE.Group();
+    if (sidewalks) {
+      const walk = HM.mat('concrete', '#c7c2b8', { uv: 1.5 });
+      const curb = HM.flat('#b5b0a7', { rough: 0.9 });
+      for (const s of [-1, 1]) {
+        group.add(HM.ribbon([[-900, ROAD_Z + s * (ROAD_HALF + 2.4)], [900, ROAD_Z + s * (ROAD_HALF + 2.4)]], 1.6, walk, roadGround, { lift: 0.13, step: 4, uvScale: 1.5 }));
+        solid.add(HM.box(1800, 0.16, 0.22, curb, 0, height(0, ROAD_Z) - 0.02, ROAD_Z + s * (ROAD_HALF + 0.1)));
+      }
+    }
+    // streetlights, alternating sides
+    const pole = HM.flat('#4a4d52', { metal: 0.6, rough: 0.45 });
+    const lamp = HM.flat('#f4efe2', { emissive: lampColor, emissiveIntensity: 0.4 });
+    for (let x = -200, k = 0; x <= 200; x += 48, k++) {
+      const s = k % 2 ? 1 : -1;
+      const z = ROAD_Z + s * (ROAD_HALF + 1.0), y = height(x, z);
+      solid.add(HM.box(0.16, 6.2, 0.16, pole, x, y, z));
+      const arm = HM.box(0.1, 0.1, 1.6, pole, x, y + 6.1, z - s * 0.75);
+      solid.add(arm);
+      solid.add(HM.box(0.5, 0.16, 0.8, lamp, x, y + 5.98, z - s * 1.5));
+    }
+    // neighbors
+    const footprints = [];
+    spots.forEach((s, i) => {
+      const { style, opts } = pick(i, rnd);
+      const y = s.h ?? height(s.x, s.z);
+      const roadEdgeLocal = s.rot ? s.z - (ROAD_Z + ROAD_HALF) : (ROAD_Z - ROAD_HALF) - s.z;
+      const nEnv = { ...env, foundation: env.neighborFoundation || env.foundation, frontGround: 0, roadEdgeLocal };
+      const h = HM.buildHouse(style, nEnv, opts, { x: s.x, z: s.z, y, rot: s.rot });
+      const wrap = new THREE.Group();
+      wrap.add(h.group);
+      wrap.position.set(s.x, y, s.z);
+      wrap.rotation.y = s.rot;
+      solid.add(wrap);
+      const f = s.rot ? -1 : 1;
+      h.footprints.forEach((r) => footprints.push({ x: s.x + r.x * f, z: s.z + r.z * f, w: r.w, d: r.d }));
+    });
+    group.add(HM.mergeByMaterial(solid));
+    return footprints;
+  }
+
+  // Random pick helpers for neighbor variety
+  const pickOf = (rnd, arr) => arr[Math.floor(rnd() * arr.length)];
+  const between = (rnd, a, b) => a + rnd() * (b - a);
+
+  const MAIN_PAD = { x0: -22, x1: 24, z0: -14, z1: 13, mx: 6, back: 6, front: 4, h: 0 };
 
   // ======================================================================
   // BEACHFRONT
   // ======================================================================
-  function beach() {
+  function beach(quality) {
     const group = new THREE.Group();
     const rnd = HM.rng(11);
     const WATER = -1.6;
-    const height = (x, z) => {
+    const spots = neighborSpots(38);
+    const raw = (x, z) => {
       let h = 0.25 * HM.fbm(x * 0.05, z * 0.05);
       if (z < -20) h -= (-z - 20) * 0.11; // beach slopes down to the water
-      const dune = HM.smooth(16, 32, Math.abs(x)) * HM.smooth(-40, -18, z);
-      h += dune * (1.2 + 2.6 * HM.fbm(x * 0.03 + 5, z * 0.04));
-      h += HM.smooth(22, 60, z) * 1.5 * HM.fbm(x * 0.02, z * 0.03 + 9);
-      return lerp(h, 0, rectWeight(x, z, PAD));
+      const dune = HM.smooth(-40, -18, z) * (0.6 + HM.fbm(x * 0.02, 3));
+      h += dune * (1.0 + 2.2 * HM.fbm(x * 0.03 + 5, z * 0.04));
+      h += HM.smooth(60, 110, z) * 3 * HM.fbm(x * 0.02, z * 0.03 + 9);
+      return h;
     };
+    const height = compose(raw, () => 0.1, [MAIN_PAD, ...spots.map((s) => padFor(s, 0))]);
     const dry = C('#e3d0a4'), wet = C('#b59b70'), grassy = C('#c7bd86');
     group.add(terrain({
       height,
@@ -247,19 +401,31 @@ var HM = (window.HM = window.HM || {});
     }));
     ocean.receiveShadow = true;
     group.add(ocean);
-
-    // Surf: a band of foam that washes up and back along the shoreline.
     const foamTex = foamTexture();
     const foam = new THREE.Mesh(new THREE.PlaneGeometry(900, 7, 1, 1), new THREE.MeshStandardMaterial({ map: foamTex, transparent: true, opacity: 0.9, roughness: 0.9, depthWrite: false }));
     foam.rotation.x = -Math.PI / 2;
     foamTex.repeat.set(60, 1);
     group.add(foam);
-    const shoreZ = -20 - (WATER + 0.05) / -0.11 - 0.5; // where the sand meets the water
+    const shoreZ = -20 - (WATER + 0.05) / -0.11 - 0.5;
+
+    const env = {
+      foundation: 'pilings', frontGround: 0, height, roadEdgeLocal: ROAD_Z - ROAD_HALF,
+      shrub: 'grass', mailboxColor: '#f4f3ef',
+      pathMat: HM.mat('deck', '#9b8263', { uv: 1.2 }), driveMat: HM.mat('concrete', '#d3c6a6', { uv: 3 }),
+    };
+    const pastel = ['#a9c6cf', '#f3e3b5', '#e9b8a8', '#cfe0c9', '#f2f1ec', '#b9c8e6', '#f0d0b0'];
+    const keepOut = street({
+      group, height, env, spots, rnd, shoulder: HM.mat('concrete', '#d8c9a4', { uv: 3 }), sidewalks: false,
+      pick: (i, r) => (i % 4 === 3
+        ? { style: 'modern', opts: { stories: 2, w: between(r, 12, 14), d: 9, wallColor: '#f2f1ec', garage: 0, chimney: false } }
+        : { style: 'cottage', opts: { wallColor: pickOf(r, pastel), stories: r() < 0.5 ? 1 : 2, roofShape: pickOf(r, ['hip', 'gable']), roofColor: pickOf(r, ['#9aa3a8', '#6f7a80', '#4f5a63']), w: between(r, 10, 13), d: between(r, 8.5, 10), garage: r() < 0.4 ? 1 : 0, balcony: r() < 0.5 } }),
+    });
 
     // Dune grass tufts
     const tuftGeo = new THREE.ConeGeometry(0.06, 0.9, 4);
     tuftGeo.translate(0, 0.45, 0);
-    const tufts = scatter(rnd, 2600, { x: [-160, 160], z: [-38, 90], avoid: (x, z) => height(x, z) < 0.35 || (Math.abs(x) < 20 && z > -30 && z < 14) || (Math.abs(x - 1) < 2 && z < -8) });
+    const clear = (x, z) => keepOut.some((r) => Math.abs(x - r.x) < r.w / 2 + 1 && Math.abs(z - r.z) < r.d / 2 + 1);
+    const tufts = scatter(rnd, quality === 'high' ? 6000 : 3000, { x: [-170, 170], z: [-38, 120], avoid: (x, z) => height(x, z) < 0.3 || Math.abs(z - ROAD_Z) < ROAD_HALF + 2 || (Math.abs(x) < 24 && z > -16 && z < 22) || clear(x, z) });
     group.add(instances(tuftGeo, HM.flat('#9aa35a', { rough: 1 }), tufts, (o, [x, z], i, col) => {
       o.position.set(x + (i % 3) * 0.15, height(x, z) - 0.05, z);
       o.rotation.set((rnd() - 0.5) * 0.7, rnd() * 6, (rnd() - 0.5) * 0.7);
@@ -267,22 +433,23 @@ var HM = (window.HM = window.HM || {});
       col.set('#9aa35a').offsetHSL((rnd() - 0.5) * 0.05, 0, (rnd() - 0.5) * 0.15);
       return true;
     }));
-
-    // Boardwalk from the back of the house over the dunes to the sand
+    // Boardwalks over the dunes, from each beach-side house to the sand
     const plank = HM.mat('deck', '#9b8263', { uv: 1.2 });
-    for (let z = -7; z > shoreZ + 8; z -= 2) {
-      const y = Math.max(height(1, z), 0) + 0.45;
-      group.add(HM.box(2, 0.12, 2.02, plank, 1, y, z - 1));
-      for (const s of [-0.9, 0.9]) group.add(HM.box(0.14, y - height(1 + s, z - 1) + 0.1, 0.14, HM.flat('#6d5a47'), 1 + s, height(1 + s, z - 1) - 0.1, z - 1));
+    const walks = new THREE.Group();
+    for (const bx of [1, -38, 38, -76, 76]) {
+      for (let z = -7; z > shoreZ + 8; z -= 2) {
+        const y = Math.max(height(bx, z), 0) + 0.45;
+        walks.add(HM.box(1.8, 0.12, 2.02, plank, bx, y, z - 1));
+      }
     }
     // Sand fence along the dune line
-    for (let x = -60; x < 60; x += 1.6) {
-      if (Math.abs(x - 1) < 2.5) continue;
+    for (let x = -120; x < 120; x += 1.6) {
+      if ([1, -38, 38, -76, 76].some((b) => Math.abs(x - b) < 2.5)) continue;
       const z = -24 + Math.sin(x * 0.07) * 2;
-      group.add(HM.box(0.08, 1.0, 0.03, HM.flat('#8c7a62'), x, height(x, z) - 0.1, z));
+      walks.add(HM.box(0.08, 1.0, 0.03, HM.flat('#8c7a62'), x, height(x, z) - 0.1, z));
     }
-    // Palms, an umbrella and a pair of beach chairs
-    [[-14, 6], [15, -3], [-19, -8], [20, 9], [-24, 14]].forEach(([x, z]) => group.add(palm(x, z, height(x, z), rnd)));
+    group.add(HM.mergeByMaterial(walks));
+    [[-17, 8], [-24, -6], [26, 12], [-56, 10], [58, -4], [18, 36], [-30, 40], [70, 42]].forEach(([x, z]) => group.add(palm(x, z, height(x, z), rnd)));
     const um = new THREE.Group();
     um.add(HM.box(0.06, 2.3, 0.06, HM.flat('#dddddd'), 0, 0, 0));
     const canopy = HM.mesh(new THREE.ConeGeometry(1.5, 0.6, 8, 1, true), HM.flat('#e05b3c', { side: THREE.DoubleSide }));
@@ -295,18 +462,17 @@ var HM = (window.HM = window.HM || {});
     }
     um.position.set(-6, height(-6, shoreZ + 7), shoreZ + 7);
     group.add(um);
-
     clouds(group, rnd, 9);
 
     const pos = oceanGeo.attributes.position;
     let frame = 0;
     return {
-      group,
+      group, env, keepOut, height,
       update(t) {
         normalTex.offset.set(t * 0.012, t * 0.02);
         foam.position.set(0, WATER + 0.03, shoreZ + 1.5 + Math.sin(t * 0.8) * 1.6);
         foam.material.opacity = 0.55 + 0.35 * Math.sin(t * 0.8 + 1.2);
-        if (frame++ % 2) return; // swell geometry every other frame is plenty
+        if (frame++ % 2) return;
         for (let i = 0; i < pos.count; i++) {
           const x = base[i * 3], z = base[i * 3 + 2];
           const damp = HM.smooth(-45, -120, z) * 0.7 + 0.3;
@@ -376,30 +542,30 @@ var HM = (window.HM = window.HM || {});
   // ======================================================================
   // MOUNTAIN HILLSIDE
   // ======================================================================
-  function mountain() {
+  function mountain(quality) {
     const group = new THREE.Group();
     const rnd = HM.rng(23);
     const TERRACE = -2.7;
+    const spots = neighborSpots(40);
     const raw = (x, z) => {
       let h = -0.2 * z + (HM.fbm(x * 0.02, z * 0.02) - 0.5) * 8;
       h += Math.min(Math.max(0, -z - 40) * 0.28, 70) * (0.6 + HM.fbm(x * 0.01, z * 0.01)); // steeper uphill behind
-      h += HM.smooth(60, 200, Math.abs(x)) * HM.fbm(x * 0.012 + 3, z * 0.012) * 40;
+      h += HM.smooth(70, 220, Math.abs(x)) * HM.fbm(x * 0.012 + 3, z * 0.012) * 40;
       return h;
     };
-    const height = (x, z) => {
-      let h = raw(x, z);
-      h = lerp(h, TERRACE, rectWeight(x, z, { x0: -17, x1: 17, z0: 4, z1: 17, mx: 6, back: 0.01, front: 8 }));
-      h = lerp(h, 0, rectWeight(x, z, { x0: -15, x1: 15, z0: -10, z1: 4.9, mx: 6, back: 7, front: 0.9 }));
-      return h;
-    };
-    const grass = C('#6e7c45'), dryGrass = C('#8c8150'), rock = C('#7b756d'), dirt = C('#6f5d45');
+    const roadH = (x) => -0.2 * ROAD_Z + (HM.fbm(x * 0.004, 3) - 0.5) * 4;
+    spots.forEach((s) => { s.h = -0.2 * s.z + (HM.fbm(s.x * 0.02, s.z * 0.02) - 0.5) * 4; });
+    const height = compose(raw, roadH, [
+      ...spots.map((s) => padFor(s, s.h)),
+      { x0: -24, x1: 26, z0: 2.5, z1: 12, mx: 6, back: 0.01, front: 6, h: TERRACE },
+      { x0: -22, x1: 24, z0: -14, z1: 2.5, mx: 6, back: 7, front: 0.9, h: 0 },
+    ]);
+    const grass = C('#6e7c45'), dryGrass = C('#8c8150'), rock = C('#7b756d');
     group.add(terrain({
       height,
       color: (x, z, h, slope) => {
         let c = mixC(grass, dryGrass, HM.fbm(x * 0.04, z * 0.04) * 1.4 - 0.2);
         c = mixC(c, rock, HM.smooth(0.12, 0.3, slope));
-        const nearPad = rectWeight(x, z, { x0: -15, x1: 15, z0: -10, z1: 17, mx: 2, back: 2, front: 2 });
-        c = mixC(c, dirt, nearPad * 0.15);
         return c.offsetHSL(0, 0, (HM.fbm(x * 0.2, z * 0.2) - 0.5) * 0.06);
       },
     }));
@@ -426,20 +592,36 @@ var HM = (window.HM = window.HM || {});
       group.add(m);
     });
 
+    const env = {
+      foundation: 'walkout', neighborFoundation: 'stonecrawl', frontGround: TERRACE, height, roadEdgeLocal: ROAD_Z - ROAD_HALF,
+      shrub: 'juniper', mailboxColor: '#3a3a3a',
+      pathMat: HM.mat('stone', '#8e8373', { uv: 2 }), driveMat: HM.mat('concrete', '#8d8373', { uv: 3 }),
+    };
+    const woods = ['#7a5234', '#5e4430', '#8c6a4a', '#6b5040'];
+    const keepOut = street({
+      group, height, env, spots, rnd, shoulder: HM.mat('concrete', '#8a8274', { uv: 3 }), sidewalks: false,
+      pick: (i, r) => (i % 3 === 2
+        ? { style: 'craftsman', opts: { wallColor: pickOf(r, ['#5e6b55', '#6d5a47', '#4f5d63']), roofColor: '#3b3f3a', roofMat: 'seam', garage: 1, porch: r() < 0.6 } }
+        : { style: 'chalet', opts: { wallColor: pickOf(r, woods), w: between(r, 10, 12.5), d: between(r, 9, 11), garage: r() < 0.5 ? 1 : 0, roofColor: pickOf(r, ['#3b3f3a', '#5a2f28', '#2f3a33']) } }),
+    });
+    const road = { x: 0, z: ROAD_Z, w: 4000, d: ROAD_HALF * 2 + 5 };
+
     // Pine forest: trunk + three stacked cones per tree, all instanced
-    const pad = (x, z) => rectWeight(x, z, { x0: -19, x1: 19, z0: -14, z1: 22, mx: 1, back: 1, front: 1 }) > 0.01 || (Math.abs(x - 10) < 4 && z > 0 && z < 60);
-    const spots = scatter(rnd, 1400, { rMin: 20, rMax: 380, avoid: pad });
-    const scales = spots.map(() => 0.7 + rnd() * 0.7);
+    const blocked = (x, z) => rectWeight(x, z, { x0: -24, x1: 26, z0: -16, z1: 16, mx: 1, back: 1, front: 1 }) > 0.01
+      || Math.abs(z - ROAD_Z) < ROAD_HALF + 5
+      || spots.some((s) => Math.abs(x - s.x) < 15 && Math.abs(z - s.z) < 13);
+    const trees = scatter(rnd, quality === 'high' ? 2400 : 1500, { rMin: 18, rMax: 400, avoid: blocked });
+    const scales = trees.map(() => 0.7 + rnd() * 0.7);
     const trunkGeo = new THREE.CylinderGeometry(0.18, 0.3, 2.4, 6);
     trunkGeo.translate(0, 1.2, 0);
-    group.add(instances(trunkGeo, HM.flat('#4d3a2a', { rough: 1 }), spots, (o, [x, z], i) => {
+    group.add(instances(trunkGeo, HM.flat('#4d3a2a', { rough: 1 }), trees, (o, [x, z], i) => {
       o.position.set(x, height(x, z) - 0.2, z);
       o.scale.setScalar(scales[i]);
     }));
     [[2.6, 4.2, 2.0], [2.0, 3.4, 4.1], [1.3, 2.8, 5.9]].forEach(([r, h, y]) => {
       const g = new THREE.ConeGeometry(r, h, 8);
       g.translate(0, y, 0);
-      group.add(instances(g, HM.flat('#2f4a2e', { rough: 0.95 }), spots, (o, [x, z], i, col) => {
+      group.add(instances(g, HM.flat('#3b5a36', { rough: 0.95 }), trees, (o, [x, z], i, col) => {
         o.position.set(x, height(x, z) - 0.2, z);
         o.scale.setScalar(scales[i]);
         o.rotation.y = i;
@@ -447,100 +629,102 @@ var HM = (window.HM = window.HM || {});
         return true;
       }));
     });
-    // Boulders
-    const rocks = scatter(rnd, 160, { rMin: 18, rMax: 200, avoid: pad });
-    group.add(instances(new THREE.DodecahedronGeometry(1, 0), HM.flat('#8a847b', { rough: 1 }), rocks, (o, [x, z], i) => {
+    const rocks = scatter(rnd, 160, { rMin: 18, rMax: 200, avoid: blocked });
+    group.add(instances(new THREE.DodecahedronGeometry(1, 0), HM.flat('#8a847b', { rough: 1 }), rocks, (o, [x, z]) => {
       o.position.set(x, height(x, z), z);
       o.scale.set(0.6 + rnd() * 1.8, 0.4 + rnd() * 1.0, 0.6 + rnd() * 1.6);
       o.rotation.set(rnd(), rnd() * 6, rnd());
     }));
-    // Stone retaining walls where the pad is cut into the hill
-    const stone = HM.mat('stone', '#8a8173', { uv: 2.4 });
-    group.add(HM.box(34, 3.4, 0.6, stone, 0, -0.4, -16));
-    // Gravel drive curving up to the terrace
-    const drive = HM.mat('concrete', '#8d8373', { uv: 3 });
-    for (let z = 8; z < 60; z += 3) {
-      const x = 10 + Math.sin(z * 0.05) * 2;
-      const seg = HM.box(4, 0.2, 3.2, drive, x, height(x, z) - 0.12, z);
-      seg.rotation.x = Math.atan2(height(x, z - 1.6) - height(x, z + 1.6), 3.2);
-      group.add(seg);
-    }
-
+    // Mountain meadow grass around the houses
+    const meadow = new HM.Grass({
+      area: { x0: -70, x1: 70, z0: -26, z1: 70 }, height, count: quality === 'high' ? 34000 : 11000,
+      colors: ['#6f7d45', '#7d8a4c', '#8c8a52', '#65743f'], keepOut: [road, ...keepOut],
+    });
+    group.add(meadow.mesh);
     clouds(group, rnd, 7);
-    return { group, update() {} };
+    return { group, env, keepOut, height, grass: meadow, update(t) { meadow.update(t); } };
   }
 
   // ======================================================================
   // SUBURBAN STREET
   // ======================================================================
-  function suburban() {
+  function suburban(quality) {
     const group = new THREE.Group();
     const rnd = HM.rng(37);
-    const height = (x, z) => lerp(0.12 * (HM.fbm(x * 0.05, z * 0.05) - 0.5) - 0.02, 0, rectWeight(x, z, PAD));
+    const spots = neighborSpots(34);
+    const raw = (x, z) => 0.12 * (HM.fbm(x * 0.05, z * 0.05) - 0.5) + HM.smooth(90, 220, Math.hypot(x, z - ROAD_Z)) * (HM.fbm(x * 0.006, z * 0.006) - 0.4) * 20;
+    const height = compose(raw, () => 0, [MAIN_PAD, ...spots.map((s) => padFor(s, 0))]);
     const lawn = C('#5d8a3a'), lawn2 = C('#76954a');
     group.add(terrain({
       height,
       color: (x, z) => {
-        const stripe = Math.sin(x * 0.9) > 0 ? 0.02 : -0.02; // mowing stripes
+        const stripe = (Math.sin(x * 0.9) > 0 ? 0.012 : -0.012) * (1 - HM.smooth(40, 90, Math.hypot(x, z))); // mowing stripes, near the houses
         return mixC(lawn, lawn2, HM.fbm(x * 0.08, z * 0.08) * 1.2 - 0.2).offsetHSL(0, 0, stripe);
       },
     }));
 
-    const asphalt = HM.mat('concrete', '#3c3e42', { uv: 4, bumpScale: 0.6 });
-    const walk = HM.mat('concrete', '#c3beb4', { uv: 1.5 });
-    group.add(HM.box(900, 0.06, 9, asphalt, 0, 0, 22));
-    for (let x = -440; x < 440; x += 6) group.add(HM.box(3, 0.02, 0.14, HM.flat('#e2c24a'), x, 0.06, 22));
-    for (const z of [16.3, 27.7]) {
-      group.add(HM.box(900, 0.12, 1.8, walk, 0, 0, z));
-      group.add(HM.box(900, 0.16, 0.25, HM.flat('#b1ada5'), 0, 0, z + (z < 22 ? 1.0 : -1.0)));
-    }
-    // Driveway to the garage side
-    group.add(HM.box(4.6, 0.05, 11, walk, 9, 0, 11.5));
-    // Mailbox at the curb
-    group.add(HM.group(
-      HM.box(0.1, 1.1, 0.1, HM.flat('#f0eee8'), -6, 0, 14.9),
-      HM.box(0.3, 0.3, 0.55, HM.flat('#2a2d31', { metal: 0.4 }), -6, 1.1, 14.9),
-    ));
-    // Neighbours on both sides and across the street
-    const walls = [HM.mat('lap', '#c9d2d6', { uv: 2 }), HM.mat('lap', '#e3d8c3', { uv: 2 }), HM.mat('lap', '#9fb1a2', { uv: 2 }), HM.mat('brick', '#9a5a45', { uv: 1.4 }), HM.mat('lap', '#d7c7b0', { uv: 2 })];
-    const roofs = [HM.mat('asphalt', '#4b4a4c', { uv: 2 }), HM.mat('asphalt', '#5a4b40', { uv: 2 })];
-    [[-34, 0, 0], [34, -1, 0], [-68, 1, 0], [68, 0, 0], [-22, 44, Math.PI], [18, 45, Math.PI], [56, 44, Math.PI], [-60, 45, Math.PI]].forEach(([x, z, r], i) => {
-      group.add(simpleHouse({ x, z, w: 11 + (i % 3), d: 9, h: i % 2 ? 5.4 : 3, wall: walls[i % walls.length], roof: roofs[i % 2], rotY: r, pitch: 0.45 + (i % 3) * 0.1 }));
+    const env = {
+      foundation: 'crawl', frontGround: 0, height, roadEdgeLocal: ROAD_Z - ROAD_HALF,
+      shrub: 'boxwood', pathMat: HM.mat('concrete', '#c3beb4', { uv: 1.3 }), driveMat: HM.mat('concrete', '#bdb8ae', { uv: 3 }),
+    };
+    const sidings = ['#f2f1ec', '#c9d2d6', '#9fb1a2', '#34455a', '#d7c7b0', '#e3d8c3', '#8a9aa6'];
+    const keepOut = street({
+      group, height, env, spots, rnd, shoulder: null, sidewalks: true,
+      pick: (i, r) => {
+        const k = i % 3;
+        if (k === 0) return { style: 'ranch', opts: { wallMat: r() < 0.5 ? 'brick' : 'lap', wallColor: r() < 0.5 ? pickOf(r, ['#b8674f', '#a86a58', '#c28468']) : pickOf(r, sidings), roofColor: pickOf(r, ['#4b4a4c', '#5a4b40', '#3f4448']), w: between(r, 15, 17.5) } };
+        if (k === 1) return { style: 'farmhouse', opts: { wallMat: pickOf(r, ['lap', 'batten']), wallColor: pickOf(r, sidings), trimColor: '#f4f3ef', roofMat: 'asphalt', roofColor: pickOf(r, ['#4b4a4c', '#3f4448']), pitch: 8, garage: r() < 0.6 ? 2 : 1, dormers: r() < 0.4, chimney: r() < 0.5, doorColor: pickOf(r, ['#9b2d24', '#243a5a', '#23272b']) } };
+        return { style: 'craftsman', opts: { wallColor: pickOf(r, ['#7c8b67', '#8a7a62', '#6d7f8a', '#b09a72']), garage: 1, dormers: r() < 0.5 } };
+      },
     });
-    // Street trees and yard trees
-    for (let x = -120; x <= 120; x += 17) {
-      if (Math.abs(x - 9) < 5) continue;
-      group.add(deciduous(x + rnd() * 2, 14, 0, 0.9 + rnd() * 0.4, rnd));
-      group.add(deciduous(x + 8 + rnd() * 2, 30, 0, 0.9 + rnd() * 0.4, rnd));
-    }
-    [[-18, -12], [16, -15], [-24, 4], [26, 6], [-6, -22], [8, -24]].forEach(([x, z]) => group.add(deciduous(x, z, height(x, z), 1.1 + rnd() * 0.3, rnd, '#4e7334')));
-    // Privacy fence along the back of the lot and hedges on the sides
-    const fence = HM.mat('batten', '#a88a68', { uv: 1 });
-    group.add(HM.box(52, 1.8, 0.1, fence, 0, 0, -20));
-    for (const x of [-26, 26]) group.add(HM.box(1.1, 1.3, 32, HM.flat('#3f6130', { rough: 1 }), x, 0, -4));
-    const background = scatter(rnd, 120, { x: [-300, 300], z: [-260, -40], avoid: (x, z) => Math.abs(x) < 30 && z > -30 });
-    background.forEach(([x, z]) => group.add(deciduous(x, z, height(x, z), 1.0 + rnd() * 0.6, rnd, rnd() < 0.5 ? '#4e7334' : '#62823c')));
+    const road = { x: 0, z: ROAD_Z, w: 4000, d: (ROAD_HALF + 3.3) * 2 };
 
+    const trees = new THREE.Group();
+    // street trees in the planting strip between curb and sidewalk
+    for (let x = -130; x <= 130; x += 15) {
+      for (const s of [-1, 1]) {
+        const tx = x + s * 5 + rnd() * 2, tz = ROAD_Z + s * (ROAD_HALF + 1.2);
+        if (Math.abs(tx - 12) < 7 || Math.abs(tx) < 3 || keepOut.some((r) => Math.abs(tx - r.x) < r.w / 2 + 1.5 && Math.abs(tz - r.z) < r.d / 2 + 1.5)) continue;
+        trees.add(deciduous(tx, tz, 0, 0.85 + rnd() * 0.3, rnd));
+      }
+    }
+    // backyard trees, and the wooded edge of the subdivision
+    [[-18, -12], [16, -15], [-8, -20], [-54, -14], [52, -12], [-88, -16], [90, -18], [-36, 72], [30, 74]].forEach(([x, z]) => trees.add(deciduous(x, z, height(x, z), 1.1 + rnd() * 0.3, rnd)));
+    scatter(rnd, quality === 'high' ? 220 : 140, { x: [-320, 320], z: [-300, -32], avoid: () => false }).forEach(([x, z]) => trees.add(deciduous(x, z, height(x, z), 1.0 + rnd() * 0.6, rnd)));
+    scatter(rnd, quality === 'high' ? 160 : 90, { x: [-320, 320], z: [86, 300], avoid: () => false }).forEach(([x, z]) => trees.add(deciduous(x, z, height(x, z), 1.0 + rnd() * 0.6, rnd)));
+    // wood privacy fences along the back lot lines
+    const fence = HM.mat('batten', '#a88a68', { uv: 1 });
+    trees.add(HM.box(150, 1.8, 0.1, fence, 0, 0, -16));
+    for (const x of [-17, 17, -51, 51]) trees.add(HM.box(0.1, 1.8, 12, fence, x, 0, -10));
+    group.add(HM.mergeByMaterial(trees));
+
+    const lawnGrass = new HM.Grass({
+      area: { x0: -70, x1: 70, z0: -15.5, z1: 66 }, height, count: quality === 'high' ? 50000 : 16000,
+      colors: ['#5d8a3a', '#6a9443', '#557f35', '#78994a'], keepOut: [road, ...keepOut],
+    });
+    group.add(lawnGrass.mesh);
     clouds(group, rnd, 12);
-    return { group, update() {} };
+    return { group, env, keepOut, height, grass: lawnGrass, update(t) { lawnGrass.update(t); } };
   }
 
   // ======================================================================
   // DESERT
   // ======================================================================
-  function desert() {
+  function desert(quality) {
     const group = new THREE.Group();
     const rnd = HM.rng(53);
-    const height = (x, z) => {
-      const h = (HM.fbm(x * 0.012, z * 0.012) - 0.5) * 6 + (HM.fbm(x * 0.06, z * 0.06) - 0.5) * 0.8;
-      return lerp(h, 0, rectWeight(x, z, { ...PAD, mx: 14, back: 14, front: 14 }));
-    };
+    const spots = neighborSpots(46);
+    const raw = (x, z) => (HM.fbm(x * 0.012, z * 0.012) - 0.5) * 6 + (HM.fbm(x * 0.06, z * 0.06) - 0.5) * 0.8;
+    const roadH = (x) => (HM.fbm(x * 0.004, 11) - 0.5) * 3;
+    spots.forEach((s) => { s.h = roadH(s.x) * 0.6; });
+    const height = compose(raw, roadH, [{ ...MAIN_PAD, mx: 12, back: 12, front: 6 }, ...spots.map((s) => ({ ...padFor(s, s.h), mx: 9, back: 9, front: 6 }))]);
     const sand = C('#d2ad84'), red = C('#bf8a62'), gravel = C('#dcc3a2');
     group.add(terrain({
       height,
       color: (x, z) => {
         let c = mixC(sand, red, HM.fbm(x * 0.02 + 4, z * 0.02) * 1.6 - 0.4);
-        c = mixC(c, gravel, rectWeight(x, z, { x0: -17, x1: 17, z0: -12, z1: 14, mx: 3, back: 3, front: 3 }) * 0.7);
+        const yard = Math.max(rectWeight(x, z, { x0: -20, x1: 22, z0: -13, z1: 20, mx: 3, back: 3, front: 3 }), ...spots.map((s) => rectWeight(x, z, { x0: s.x - 12, x1: s.x + 12, z0: s.z - 11, z1: s.z + 11, mx: 3, back: 3, front: 3 })));
+        c = mixC(c, gravel, yard * 0.6);
         return c.offsetHSL(0, 0, (HM.fbm(x * 0.4, z * 0.4) - 0.5) * 0.07);
       },
     }));
@@ -556,10 +740,9 @@ var HM = (window.HM = window.HM || {});
         const a = Math.atan2(vz, vx);
         const t = (vy + h / 2) / h;
         const n = 0.82 + HM.fbm(Math.cos(a) * 3 + k, Math.sin(a) * 3 + t * 2) * 0.4;
-        const top = vy > h / 2 - 1;
         p.setXYZ(i, vx * n, vy, vz * n * (0.7 + (k % 3) * 0.15));
         const c = bands[Math.floor(t * 9 + k) % bands.length].clone();
-        if (top) c.set('#b8784c');
+        if (vy > h / 2 - 1) c.set('#b8784c');
         c.offsetHSL(0, 0, (HM.noise(a * 6, t * 20) - 0.5) * 0.08);
         cols.push(c.r, c.g, c.b);
       }
@@ -570,10 +753,26 @@ var HM = (window.HM = window.HM || {});
       group.add(m);
     });
 
+    const env = {
+      foundation: 'slab', frontGround: 0, height, roadEdgeLocal: ROAD_Z - ROAD_HALF,
+      shrub: 'agave', mailboxColor: '#6b4a2e',
+      pathMat: HM.mat('stone', '#c9a27e', { uv: 1.6 }), driveMat: HM.mat('concrete', '#c8ae8c', { uv: 3 }),
+    };
+    const earth = ['#c99a70', '#d8b48c', '#b88660', '#e0c3a0', '#c7a07a'];
+    const keepOut = street({
+      group, height, env, spots, rnd, shoulder: HM.mat('concrete', '#c4a888', { uv: 3 }), sidewalks: false, lampColor: '#ffd29a',
+      pick: (i, r) => {
+        if (i % 4 === 1) return { style: 'modern', opts: { stories: 1, wallColor: '#efe9df', garage: 2, w: between(r, 14, 16), chimney: false } };
+        if (i % 4 === 3) return { style: 'mediterranean', opts: { stories: 1, tower: false, garage: 1, wallColor: pickOf(r, ['#eedfc2', '#e8d2b0']) } };
+        return { style: 'pueblo', opts: { wallColor: pickOf(r, earth), trimColor: pickOf(r, ['#4a6a7a', '#3f7a6e', '#6b4a2e']), w: between(r, 12, 15), garage: r() < 0.6 ? 1 : 0 } };
+      },
+    });
+    const clearOf = (x, z) => (Math.abs(x) < 26 && z > -16 && z < 22) || Math.abs(z - ROAD_Z) < ROAD_HALF + 3 || keepOut.some((r) => Math.abs(x - r.x) < r.w / 2 + 2 && Math.abs(z - r.z) < r.d / 2 + 2);
+
     // Saguaro cacti: trunk plus upturned arms
     const cactus = HM.flat('#5d7a45', { rough: 0.9 });
-    const avoid = (x, z) => Math.abs(x) < 20 && z > -16 && z < 18;
-    scatter(rnd, 70, { rMin: 20, rMax: 260, avoid }).forEach(([x, z]) => {
+    const plants = new THREE.Group();
+    scatter(rnd, quality === 'high' ? 110 : 70, { rMin: 16, rMax: 260, avoid: clearOf }).forEach(([x, z]) => {
       const g = new THREE.Group();
       const h = 4 + rnd() * 5;
       const trunk = HM.mesh(new THREE.CapsuleGeometry(0.35, h, 4, 10), cactus);
@@ -592,37 +791,36 @@ var HM = (window.HM = window.HM || {});
       }
       g.position.set(x, height(x, z) - 0.2, z);
       g.rotation.y = rnd() * 6;
-      group.add(g);
+      plants.add(g);
     });
+    group.add(HM.mergeByMaterial(plants));
     // Agave and low shrubs
     const agaveGeo = new THREE.ConeGeometry(0.12, 1.2, 4);
     agaveGeo.translate(0, 0.6, 0);
-    const shrubs = scatter(rnd, 500, { rMin: 14, rMax: 220, avoid });
     const agave = [];
-    shrubs.forEach(([x, z]) => { for (let k = 0; k < 7; k++) agave.push([x, z, k]); });
+    scatter(rnd, quality === 'high' ? 900 : 500, { rMin: 12, rMax: 220, avoid: clearOf }).forEach(([x, z]) => { for (let k = 0; k < 7; k++) agave.push([x, z, k]); });
     group.add(instances(agaveGeo, HM.flat('#7f9a78', { rough: 0.9 }), agave, (o, [x, z, k], i, col) => {
       o.position.set(x, height(x, z) - 0.05, z);
       o.rotation.set(0.7 + (k % 2) * 0.2, (k / 7) * Math.PI * 2 + x, 0, 'YXZ');
-      o.scale.setScalar(0.7 + ((x * 13 + z) % 1 + 1) % 1 * 0.8);
+      o.scale.setScalar(0.7 + ((((x * 13 + z) % 1) + 1) % 1) * 0.8);
       col.set(k % 3 ? '#7f9a78' : '#8a8f5e');
       return true;
     }));
-    const rocks = scatter(rnd, 220, { rMin: 15, rMax: 250, avoid });
+    const rocks = scatter(rnd, 260, { rMin: 12, rMax: 250, avoid: clearOf });
     group.add(instances(new THREE.DodecahedronGeometry(1, 0), HM.flat('#a0644a', { rough: 1 }), rocks, (o, [x, z]) => {
       o.position.set(x, height(x, z), z);
       o.scale.set(0.4 + rnd() * 1.4, 0.3 + rnd() * 0.8, 0.4 + rnd() * 1.2);
       o.rotation.set(rnd(), rnd() * 6, rnd());
     }));
-
     clouds(group, rnd, 5, '#ffe2c4', 0.75);
-    return { group, update() {} };
+    return { group, env, keepOut, height, update() {} };
   }
 
   // Lot settings. Sun directions point toward the sun; specs describe a typical
   // lot of each kind, shown in the title block.
   HM.LOTS = {
     beach: {
-      name: 'Beachfront', build: beach, foundation: 'pilings', frontGround: 0,
+      name: 'Beachfront', build: beach,
       sky: { top: '#3d82d0', horizon: '#d2e7f2', bottom: '#d2e7f2' },
       sun: { dir: [0.45, 0.72, 0.55], color: '#fff3df', intensity: 3.1 },
       hemi: { sky: '#c3def5', ground: '#dcc8a0', intensity: 1.0 },
@@ -630,15 +828,15 @@ var HM = (window.HM = window.HM || {});
       size: '0.35 acre · 90 × 170 ft', grade: 'Level, 1% toward the water', foundationName: 'Raised on wood pilings (flood zone)',
     },
     mountain: {
-      name: 'Mountain hillside', build: mountain, foundation: 'walkout', frontGround: -2.7,
+      name: 'Mountain hillside', build: mountain,
       sky: { top: '#2e6db5', horizon: '#c7dbea', bottom: '#c7dbea' },
       sun: { dir: [-0.45, 0.66, 0.6], color: '#fff0da', intensity: 3.0 },
       hemi: { sky: '#bcd6ee', ground: '#58673f', intensity: 0.95 },
       fog: { near: 200, far: 2600 }, exposure: 0.95,
-      size: '1.2 acres', grade: '18% slope, downhill to the front', foundationName: 'Stone walk-out basement',
+      size: '1.2 acres', grade: '18% slope, downhill to the road', foundationName: 'Stone walk-out basement',
     },
     suburban: {
-      name: 'Suburban street', build: suburban, foundation: 'crawl', frontGround: 0,
+      name: 'Suburban street', build: suburban,
       sky: { top: '#4a8edb', horizon: '#d9e7f0', bottom: '#d9e7f0' },
       sun: { dir: [0.35, 0.78, 0.52], color: '#fff6e6', intensity: 3.0 },
       hemi: { sky: '#c9e0f5', ground: '#6b7d48', intensity: 1.0 },
@@ -646,7 +844,7 @@ var HM = (window.HM = window.HM || {});
       size: '0.25 acre · 80 × 135 ft', grade: 'Level, 2%', foundationName: 'Block crawlspace',
     },
     desert: {
-      name: 'Desert', build: desert, foundation: 'slab', frontGround: 0,
+      name: 'Desert', build: desert,
       sky: { top: '#3f6aa8', horizon: '#f1d3b4', bottom: '#e8c29d' },
       sun: { dir: [-0.6, 0.34, 0.72], color: '#ffcf9e', intensity: 3.4 },
       hemi: { sky: '#f1cda8', ground: '#b27b50', intensity: 0.9 },
@@ -655,7 +853,7 @@ var HM = (window.HM = window.HM || {});
     },
   };
 
-  HM.buildLot = function (key) {
-    return HM.LOTS[key].build();
+  HM.buildLot = function (key, quality = 'normal') {
+    return HM.LOTS[key].build(quality);
   };
 })();
